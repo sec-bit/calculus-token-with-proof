@@ -1,0 +1,116 @@
+rev: 0.0.1
+
+inv: TRUE
+
+funcspec constructor(){
+    pre: True
+    event: @@constructor() ++ @Transefer(0x0, msg.sender, 2718281828 * (10 ** 18))
+    post: totalSupply_' = 2718281828 * (10 ** 18) 
+            and balances' = balances{ [msg.sender]<- 2718281828 * (10 ** 18)
+            and owner' = msg.sender }
+}
+
+funcspec totalSupply(){
+    pre: True
+    event: @Return(totalSupply_)
+    post: Id
+}
+
+funspec transfer(address _to, uint256 _value){
+    require: !paused and _to != address(0) and _value <= balances[msg.sender] and balances[_to] + _value < MAX_UINT256
+    {
+        pre: True
+        event:  @Transfer(msg.sender, _to, _value) ++ @Return(true)
+        post: balances' = balances{ [msg.sender]<- {$ - _value}, [_to]<- {$ + _value}}
+    }
+}
+
+funcspec balanceOf(address _owner) {
+    pre: True
+    event: @Return(balances[_owner])
+    post: Id
+}
+
+funspec transferFrom(address _from, address _to, uint256 _value){
+    require: !paused and _to != address(0) and _value <= balances[_from] and _value <= allowed[_from][msg.sender] and balances[_to] + _value < MAX_UINT256
+    {
+        pre: True
+        event: @Transfer(_from, _to, _value) ++ @Return(true)
+        post: balances' = balances{ [msg.sender]<- {$ - _value}, [_to]<- {$ + _value}} and allowed' =  allowed{ [from][msg.sender] <-  ($ - value)
+    }
+}
+
+funcspec approve(address _spender, uint256 _value){
+    require: !paused
+    {
+        pre: True
+        event:@Approval(msg.sender, _spender, _value)++ @Return(true)
+        post: allowed' =  allowed{ [msg.sender][_spender] <-  value)
+    }
+}
+
+funcspec allowance(address _owner, address _spender) {
+    pre: True
+    event: @Return(allowed[_owner][_spender])
+    post: Id
+}
+
+funspec increaseApproval(address _spender, uint _addedValue){
+    require: !paused and allowed{ [msg.sender][_spender] + _addedValue < MAX_UINT256
+    {
+        pre:True
+        event: @Approval(msg.sender, _spender, allowed[msg.sender][_spender]+ _addedValue) ++ @Return(true)
+        post: allowed' =  allowed{ [msg.sender][_spender] <-  ($ + _addedValue)
+    }    
+}
+
+funspec decreaseApproval(address _spender, uint _subValue){
+    require: !paused
+    {
+        pre: _subValue > allowed[msg.sender][_spender]
+        event: @Approval(msg.sender, 0) ++ @Return(true)
+        post: allowed' =  allowed{ [msg.sender][_spender] <- 0)
+    }
+    {
+        pre: _subValue <= allowed[msg.sender][_spender]
+        event: @Approval(msg.sender, allowed[msg.sender][_spender] - _subValue) ++ @Return(true)
+        post: allowed' =  allowed{ [msg.sender][_spender] <- $ - _subValue)
+    }
+}
+
+funcspec transferOwnership(address newOwner){
+    requir: msg.sender = owner and newOwner != address(0)
+    {
+        pre: True
+        event: @OwnershipTransferred(owner, newOwner)
+        post: owner' = newOwner
+    }
+}
+
+funcspec renounceOwnership(){
+    requir: msg.sender = owner
+    {
+        pre: True
+        event: @OwnershipRenounced(owner)
+        post: owner' = address(0)
+    }
+}
+
+funcspec pause(){
+    requir: msg.sender = owner and !paused
+    {
+        pre: True
+        event: @Pause()
+        post: paused' = True
+    }
+}
+
+
+funcspec unpause(){
+    requir: msg.sender = owner and paused
+    {
+        pre: True
+        event: @Unpause()
+        post: paused' = False
+    }
+}
