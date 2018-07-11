@@ -2,7 +2,12 @@
 
 This repository collects correctness proof of Ethereum token contract *calculas* given specifications and high-level properties. All of them are accomplished in Coq. 
 
-> Contract address: 0xf67A0910a341800b7446554102344c43883d9c78
+## Contract Info
+
+- token name: **Calculus Token**
+- symbol: CAL
+- contract address:0xf67a0910a341800b7446554102344c43883d9c78
+- website: http://www.calculus.network/
 
 ## Requirements
 
