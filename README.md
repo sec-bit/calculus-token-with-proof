@@ -1,5 +1,7 @@
 # Calculus Token with Proof
 
+[中文版](README_zh.md)
+
 This repository contains the formal correctness proofs of the Ethereum Token contract *calculus*. All are composed in the interactive proof assistant [Coq](https://coq.inria.fr/).
 
 ## Contract information
