@@ -1,67 +1,64 @@
-# Caculus Token with Proof
+# Calculus Token with Proof
 
-This repository collects correctness proof of Ethereum token contract *calculas* given specifications and high-level properties. All of them are accomplished in Coq. 
+[中文版](README_zh.md)
 
-## Contract Info
+This repository contains the formal correctness proofs of the Ethereum Token contract *calculus*. All are composed in the interactive proof assistant [Coq](https://coq.inria.fr/).
 
-- token name: **Calculus Token**
-- symbol: CAL
-- contract address:0xf67a0910a341800b7446554102344c43883d9c78
-- website: http://www.calculus.network/
+## Contract information
 
-## Requirements
+* Token name: **Calculus Token**
+* Token symbol: CAL
+* Contract address: [```0xf67a0910a341800b7446554102344c43883d9c78```](https://etherscan.io/address/0xf67a0910a341800b7446554102344c43883d9c78)
+* Project website: [Calculus](http://www.calculus.network/)
 
-[Coq](https://coq.inria.fr/) is required if you are going to check the correctness of proofs in this repo. [ProofGeneral](https://proofgeneral.github.io/) or CoqIde is required if you are going to read the definitions and the proofs in this repo thoroughly.
+## What are proved?
 
-### Coq 8.7.0
+The contract is proved to have following properties, which formally define the correctness of this contract.
 
-[Coq](https://coq.inria.fr/) is an interactive proof assistant, which, as its name suggested, assists users to construct proofs. Its also provides a small proof checker that checks the correctness of the proof. It is required if you desire to check the correctness of proofs in this repo.
+1. [```Property_totalSupply_equal_to_sum_balances```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L993) the total supply always equals the sum of all balances.
 
-The definitions and the proofs are implemented in Coq **8.7.0** (other versions may or may not work), which can be installed by following the [official instructions](https://github.com/coq/coq/wiki#coq-installation).
+2. [```Property_totalSupply_fixed_transfer```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1010) the total supply is never changed by ```transfer()```.
 
-### CoqIde
+3. [```Property_totalSupply_fixed_after_initialization```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1120) the total supply is never changed after the contract deployment.
 
-CoqIde is the official graphic front-end of Coq. It's usually installed along with Coq as shown in the above [Coq installation instructions](https://github.com/coq/coq/wiki#coq-installation). It does not require further configurations after installation. If any, you can refer to the [official instructions](https://github.com/coq/coq/wiki/Configuration%20of%20CoqIDE).
+4. [```Property_totalSupply_fixed_delegate_transfer```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1134) the total supply is never changed by ```transferFrom()```.
 
-### ProofGeneral
+5. [```Property_from_to_balances_change```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1148) ```transfer()``` always transfers the specified amount tokens from the caller account to the specified receiver's account.
 
-If you are an [Emacs](https://www.gnu.org/software/emacs/) user, a more convenient front-end of Coq is [ProofGeneral](https://proofgeneral.github.io/). The installation instructions of ProofGeneral can be found at https://proofgeneral.github.io/ and https://github.com/ProofGeneral/PG/blob/master/INSTALL.
+6. [```Property_pause_only_by_owner```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1191) only the token owner can pause the contract.
 
-## Quick Check Proofs
+7. [```Property_unpause_only_by_owner```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1209) only the token owner can unpause the contract.
 
-Coq proof checker can be invoked to check whether proofs are correct by the following command,
+8. [```Property_restricted_owner_for_transfer```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1227) the token owner cannot transfer tokens in arbitrary accounts by ```transfer()```.
 
-```shell
-make
-```
+9. [```Property_restricted_owner_for_transferFrom```](https://github.com/sec-bit/calculus-token-with-proof/blob/master/proof/Prop.v#L1260) the token owner cannot transfer tokens in arbitrary accounts by ```transferFrom()```.
 
-or if you want to check the proof of an individual contract,
+## Proof structure
 
-```shell
+The proof is composed of following components. A comprehensive introduction of the proving process and structure can be found at [tokenlibs-with-proofs: Proving Process](https://github.com/sec-bit/tokenlibs-with-proofs/tree/6310c6590aaf664be47342caa3a8854b2447f05e#proving-process)
+
+* [```Model.v```](proof/Model.v) defines the contract model, which abstracts the storage, the events, the message calls, and the external environment of this contract.
+
+* [```Spec.v```](proof/Spec.v) defines the contract specification, which formally describes the expected behavior of each public function of this contract.
+
+* [```DSL.v```](proof/DSL.v) expresses the Solidity implementation of this contract in Coq and proves the implementation of each public function does implement the specification in [```Spec.v```](proof/Spec.v).
+
+* [```Prop.v```](proof/Prop.v) formally defines high-level correctness and security properties of this contract and proves the contract specification does guarantee the correctness.
+
+## Quick check the proof
+
+The proof is accomplished in the interactive proof assistant [Coq](https://coq.inria.fr/) **8.7.0**, which can generate explicit proof objects. The proof objects can be checked by a small proof checker provided by Coq in a way independently of the proving process. The proof checker can be installed along with Coq by following the [official instructions](https://github.com/coq/coq/wiki#coq-installation).
+
+After Coq is installed, the proof checked can be called by the following command.
+
+``` shell
 cd proof; make
 ```
 
-## Repo Structure
+## Why the formal proof?
 
-```js
-Caculus Token with Proof
-├── calculus.sol
-├── calculus.ysl
-├── libs
-│   ├── AbsModel.v
-│   ├── BNat.v
-│   ├── LibEx.v
-│   ├── Mapping.v
-│   ├── TMap.v
-│   ├── TMapLib.v
-│   └── Types.v
-├── proof
-│   ├── DSL.v
-│   ├── Makefile
-│   ├── Model.v
-│   ├── Prop.v
-│   ├── Spec.v
-│   └── _CoqProject
-└── readme.md
-```
+The formal proof has the following benefits over the existing test and security audit.
 
+* By defining in the unambiguous mathematical language, the formal proof can *precisely* define the scope of correctness and security.
+
+* By strict mathematical proving, the formal proof can *fully* cover every case and code path of the smart contract *w.r.t.* the given definitions of formal specification and high-level properties.
