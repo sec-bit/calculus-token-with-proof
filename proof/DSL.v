@@ -296,6 +296,9 @@ Notation "'balances' '[' addr ']'" :=
 Notation "'allowed'" :=
   (fun (st: state) (env: env) (msg: message) => st_allowed st) : dsl_scope.
 
+Definition dsl_allowed_access (from to: state -> env -> message -> address) :=
+  fun (st: state) (env: env) (msg: message) =>
+    (allowed%dsl st env msg) ((from st env msg), (to st env msg)).
 Notation "'allowed' '[' from ']' '[' to ']'" :=
   (fun (st: state) (env: env) (msg: message) =>
      (allowed%dsl st env msg) ((from st env msg), (to st env msg))) : dsl_scope.
@@ -351,6 +354,11 @@ Definition dsl_ge :=
   fun x y (st: state) (env: env) (msg: message) =>
     (negb (ltb (x st env msg) (y st env msg))).
 Infix ">=" := dsl_ge : dsl_scope.
+
+Definition dsl_ge_le :=
+  fun x y (st: state) (env: env) (msg: message) =>
+    (negb (Nat.leb (x st env msg) (y st env msg))).
+Infix ">" := dsl_ge_le : dsl_scope.
 
 Definition dsl_lt :=
   fun x y (st: state) (env: env) (msg: message) =>
@@ -528,6 +536,19 @@ Section dsl_transfer_from.
       apply Nat.leb_le in Hle. exact Hle.
   Qed.
 
+    Lemma transferFrom_cond_dec:
+    forall st,
+      Decidable.decidable
+        (_from = _to \/ _from <> _to /\ (st_balances st _to <= MAX_UINT256 - _value)%nat).
+  Proof.
+    intros.
+    apply Decidable.dec_or.
+    - apply Nat.eq_decidable.
+    - apply Decidable.dec_and.
+      + apply neq_decidable.
+      + apply Nat.le_decidable.
+  Qed.
+
   (* Manually proved *)
   Lemma transferFrom_dsl_sat_spec:
     forall st env msg this,
@@ -539,7 +560,7 @@ Section dsl_transfer_from.
   Proof.
     intros st env msg this Hreq st0 result Hexec.
     simpl in Hreq.
-    destruct Hreq as [Hreq_pause [Hreq_blncs_lo [Hreq_blncs_hi [Hreq_allwd_lo Hreq_allwd_hi]]]].
+    destruct Hreq as [Hreq_pause [Hreq_blncs_lo [Hreq_blncs_hi [Hreq_allwd_hi Hreq_allwd_lo]]]].
     apply Nat.leb_le in Hreq_blncs_hi.
     apply Nat.leb_le in Hreq_allwd_lo.
     apply Nat.leb_le in Hreq_allwd_hi.
@@ -592,6 +613,153 @@ Section dsl_transfer_from.
     repeat (split; auto).
   Qed.
 
+    (* If no require can be satisfied, transferFrom() must revert to the initial state *)
+  Lemma transferFrom_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_transferFrom _from _to _value ->
+      ~ spec_require (funcspec_transferFrom _from _to _value this env msg) st ->
+      (forall addr0 addr1, (st_allowed st (addr0, addr1) <= MAX_UINT256)%nat) ->
+      forall st0 result,
+        dsl_exec transferFrom_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    unfold funcspec_transferFrom, ">="%nat.
+    intros st env msg this Hfunc Hreq_neg Hallwd_inv st0 result Hexec;
+    simpl in Hreq_neg.
+
+    assert (Hreq_impl:
+              ((st_pause st) = ofalse) ->
+              ( _to <> 0) ->
+              (_value <= st_balances st _from)%nat ->
+              (st_balances st _to <= MAX_UINT256 - _value)%nat ->
+              ~(_value <= st_allowed st (_from, m_sender msg))%nat).
+    {
+      intros Hpause Hto Hvalue.
+      apply Decidable.or_not_l_iff_1.
+      - unfold Decidable.decidable.
+        destruct (le_dec (st_balances st _to) ( MAX_UINT256 - _value)).
+        left. auto.
+        right. auto.
+      - generalize Hvalue; clear Hvalue.
+        apply Decidable.or_not_l_iff_1.
+        + unfold Decidable.decidable.
+          destruct (le_dec _value (st_balances st _from)).
+          left. auto. right. auto.
+        + generalize Hto; clear Hto.
+          apply Decidable.or_not_l_iff_1.
+          * unfold Decidable.decidable.
+            destruct (beq_dec _to 0).
+            right. apply Nat.eq_dne.  simplbeq. auto.
+            left. apply Nat.eqb_neq in H. auto.
+          * generalize Hpause; clear Hpause.
+            {apply Decidable.or_not_l_iff_1.
+             - apply beq_decidable.
+             - apply Decidable.not_and in Hreq_neg.
+               + destruct Hreq_neg.
+                 left; auto.
+                 right. apply Decidable.not_and in H.
+                  * destruct H.
+                    left; auto.
+                     right.
+                        { apply Decidable.not_and in H.
+                          destruct H.
+                          - left. unfold not in H. auto.
+                          - apply Decidable.not_and in H.
+                            destruct H.
+                            + right. left. unfold not in H. auto.
+                            + right. right. unfold not in H. auto.
+                            + unfold Decidable.decidable.
+                              destruct (le_dec (st_balances st _to) (MAX_UINT256 - _value)).
+                              left. auto. right. auto.
+                          - unfold Decidable.decidable.
+                              destruct (le_dec _value (st_balances st _from)).
+                              left. auto. right. auto.
+                        }
+                   * unfold Decidable.decidable.
+                     destruct (beq_dec _to 0).
+                     right. apply Nat.eq_dne.  simplbeq. auto.
+                     left. apply Nat.eqb_neq in H0. auto.
+              + apply beq_decidable.
+            }
+    }
+    clear Hreq_neg.
+    
+    simpl in Hexec.
+    unfold dsl_neg in Hexec.
+    
+    destruct (bool_dec (st_pause st) ofalse).
+    + (* st_pause st = false*)
+      rewrite e in Hexec. simpl in Hexec.
+      unfold "!="%dsl in Hexec.
+      rewrite (to_immutable _ _ _) in Hexec.
+      rewrite (zero_address_immutable _ _ _) in Hexec.
+      destruct (beq_dec _to 0).
+      - (* _to = 0 *)
+        apply Nat.eqb_eq in H. rewrite H in Hexec.
+        simpl in Hexec.
+        rewrite <- Hexec. unfold Stop. auto.
+      - (* _to <> 0 *)
+        apply Nat.eqb_neq in H.
+        apply Nat.eqb_neq in H.
+        rewrite H in Hexec.
+        simpl in Hexec.
+        unfold ">="%dsl in Hexec.
+        rewrite (from_immutable _ _ _) in Hexec.
+        rewrite (value_immutable _ _ _) in Hexec.
+        destruct (lt_dec (st_balances st _from) _value).
+        * (* balances[from] < value *)
+          Print Nat.
+          apply Nat.ltb_lt in l.
+          rewrite l in Hexec.
+          simpl in Hexec.
+          rewrite <- Hexec.
+          split; auto.        
+        * (* balances[from] >= value *)
+          apply Nat.ltb_nlt in n.
+          rewrite n in Hexec.
+          simpl in Hexec.
+          unfold "<="%dsl in Hexec.
+          rewrite (to_immutable _ _ _) in Hexec.
+          unfold "-"%dsl in Hexec.
+          rewrite (max_uint256_immutable _ _ _) in Hexec.
+          rewrite (value_immutable _ _ _) in Hexec.
+                
+          destruct (le_dec (st_balances st _to)  (MAX_UINT256 - _value)).
+          {(* st_balances st _to <= MAX_UINT256 - _value*)
+            apply Nat.leb_le in l.
+            rewrite l in Hexec.
+            simpl in Hexec.
+            rewrite (from_immutable _ _ _) in Hexec.
+            rewrite (value_immutable _ _ _) in Hexec.
+            apply Nat.eqb_neq in H.
+            apply Nat.ltb_nlt in n.
+
+            apply Nat.nlt_ge in n.
+            apply Nat.leb_le in l.
+            generalize (Hreq_impl e H n l); clear Hreq_impl; intros Hreq_impl.
+            apply Nat.leb_nle in Hreq_impl.
+            rewrite Nat.leb_antisym in Hreq_impl.
+            rewrite Hreq_impl in Hexec.
+            simpl in Hexec.
+            rewrite <- Hexec.
+            unfold Stop. auto.
+          }
+          {
+            Print Nat.
+            apply Nat.leb_nle in n0.
+            rewrite n0 in Hexec.
+            simpl in Hexec.
+            rewrite <- Hexec.
+            unfold Stop. auto.
+          }
+        + apply not_false_is_true in n.
+          simpl in Hexec.
+          unfold "!="%dsl in Hexec.
+          rewrite n in Hexec; simpl in Hexec.
+          rewrite <- Hexec.
+          split; auto.
+  Qed.
+  
   Close Scope dsl_scope.
 End dsl_transfer_from.
 
@@ -700,6 +868,109 @@ Section dsl_transfer.
     repeat (split; auto).
   Qed.
 
+ (* If no require can be satisfied, transfer() must revert to the initial state *)
+  Lemma transfer_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_transfer _to _value ->
+      ~ spec_require (funcspec_transfer _to _value this env msg) st ->
+      forall st0 result,
+        dsl_exec transfer_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+
+    simpl in Hreq_neg.
+
+    assert (Hreq_impl:
+              st_pause st = ofalse ->
+              ( _to <> 0) ->
+              (_value <= st_balances st (m_sender msg))%nat ->
+              ~(st_balances st _to <= MAX_UINT256 - _value)%nat).
+     {
+      intros Hpaused Hto.
+      apply Decidable.or_not_l_iff_1.
+      - apply Nat.le_decidable.
+      - generalize Hpaused; clear Hpaused.
+        apply Decidable.or_not_l_iff_1.
+        + apply beq_decidable.
+        + apply Decidable.not_and in Hreq_neg.
+          *{ 
+            destruct Hreq_neg.
+              - left; auto.
+              - right. apply Decidable.not_and in H.
+                + destruct H.
+                  * (* ~ _to <> 0 *)
+                    apply Nat.eqb_neq in Hto.
+                    apply Nat.eq_dne in H.
+                    rewrite H in Hto. simpl in Hto. inversion Hto.
+                  * (* _to <> 0 *)
+                    apply Decidable.not_and in H.
+                    auto.
+                    apply Nat.le_decidable.
+                + unfold Decidable.decidable.
+                  left. auto.
+             }
+          * apply beq_decidable.
+    }
+    clear Hreq_neg.
+
+    simpl in Hexec.
+    unfold dsl_neg in Hexec.
+    destruct (bool_dec (st_pause st) ofalse).
+    - (* paused = false *)
+      generalize (Hreq_impl e); clear Hreq_impl; intros Hreq_impl.
+      rewrite e in Hexec; simpl in Hexec.
+
+      unfold "!="%dsl in Hexec.
+      rewrite (to_immutable _ _ _) in Hexec.
+      rewrite (zero_address_immutable _ _ _) in Hexec.
+      destruct (beq_dec _to 0).
+      + (* _to = 0 *)
+        apply Nat.eqb_eq in H. rewrite H in Hexec.
+        simpl in Hexec.
+        rewrite <- Hexec. unfold Stop. auto.
+      + (* _to <> 0 *)
+        apply Nat.eqb_neq in H.
+         generalize (Hreq_impl H); clear Hreq_impl; intros Hreq_impl.
+        apply Nat.eqb_neq in H.
+        rewrite H in Hexec.
+        simpl in Hexec.
+        unfold ">="%dsl in Hexec.
+        rewrite (value_immutable _ _ _) in Hexec.
+        * destruct (lt_dec (st_balances st (m_sender msg)) _value).
+          {(* balances[msg.sender] < value *)
+            
+            apply Nat.ltb_lt in l.
+            rewrite l in Hexec.
+            simpl in Hexec.
+            rewrite <- Hexec. 
+            unfold Stop. auto.
+          }
+          { (* balances[msg.sender] >= value *)
+            apply Nat.ltb_nlt in n.
+            rewrite n in Hexec.
+            simpl in Hexec.
+            unfold "<="%dsl in Hexec.
+            unfold "-"%dsl in Hexec.
+            rewrite (value_immutable _ _ _) in Hexec.
+            rewrite (to_immutable _ _ _) in Hexec.
+            rewrite (max_uint256_immutable _ _ _) in Hexec.
+
+            apply Nat.ltb_ge in n.
+            generalize (Hreq_impl n); clear Hreq_impl; intros Hreq_impl.
+            apply Nat.leb_nle in Hreq_impl.
+            rewrite Hreq_impl in Hexec.
+            simpl in Hexec.
+            rewrite <- Hexec.
+            split; auto.
+          }
+    - (* paused = true *)
+      apply not_false_is_true in n.
+      rewrite n in Hexec; simpl in Hexec.
+      rewrite <- Hexec.
+      split; auto.
+  Qed.
+
   Close Scope dsl_scope.
 End dsl_transfer.
 
@@ -733,6 +1004,21 @@ Section dsl_balanceOf.
     rewrite <- Hexec.
     rewrite (addr_immutable _ _ _).
     repeat (split; auto).
+  Qed.
+
+  (* If no require can be satisfied, balanceOf() must revert to the initial state *)
+  Lemma balanceOf_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_balanceOf _addr ->
+      ~ spec_require (funcspec_balanceOf _addr this env msg) st ->
+      forall st0 result,
+        dsl_exec balanceOf_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this _ Hreq_neg st0 result Hexec.
+    simpl in Hreq_neg.
+    apply (proj1 Decidable.not_true_iff) in Hreq_neg.
+    inversion Hreq_neg.
   Qed.
 
   Close Scope dsl_scope.
@@ -782,6 +1068,28 @@ Section dsl_approve.
     repeat (split; auto).
   Qed.
 
+  (* If no require can be satisfied, approve() must revert to the initial state *)
+  Lemma approve_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_approve _spender _value ->
+      ~ spec_require (funcspec_approve _spender _value this env msg) st ->
+      forall st0 result,
+        dsl_exec approve_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+
+    simpl in Hreq_neg.
+    apply not_false_is_true in Hreq_neg.
+
+    simpl in Hexec.
+    unfold dsl_neg in Hexec.
+    rewrite Hreq_neg in Hexec; simpl in Hexec.
+
+    rewrite <- Hexec.
+    split; auto.
+  Qed.
+ 
   Close Scope dsl_scope.
 End dsl_approve.
 
@@ -821,6 +1129,21 @@ Section dsl_allowance.
     repeat (split; auto).
   Qed.
 
+  (* If no require can be satisfied, allowance() must revert to the initial state *)
+  Lemma allowance_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_allowance _addr _spender ->
+      ~ spec_require (funcspec_allowance _addr _spender this env msg) st ->
+      forall st0 result,
+        dsl_exec allowance_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+    simpl in Hreq_neg.
+    apply (proj1 Decidable.not_true_iff) in Hreq_neg.
+    inversion Hreq_neg.
+  Qed.
+  
   Close Scope dsl_scope.
 End dsl_allowance.
 
@@ -893,11 +1216,66 @@ Section dsl_increaseApproval.
     repeat (split; auto).
   Qed.
 
+
+  (* If no require can be satisfied, increaseApproval() must revert to the initial state *)
+  Lemma increaseApproval_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_increaseApproval _spender _addValue ->
+      ~ spec_require (funcspec_increaseApproval _spender _addValue this env msg) st ->
+      forall st0 result,
+        dsl_exec increaseApproval_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+
+    apply increaseApproval_value_inrange in Hfunc.
+    destruct Hfunc as [_ Hvalue].
+
+    simpl in Hreq_neg.
+    assert (Hreq_impl: st_pause st = ofalse ->
+                       ~ (st_allowed st (m_sender msg, _spender) + _addValue <= MAX_UINT256)%nat).
+    {
+      apply Decidable.or_not_l_iff_1.
+      - apply beq_decidable.
+      -  apply Decidable.not_and in Hreq_neg.
+         unfold ofalse. auto.
+         Print Decidable.
+         apply beq_decidable.
+    }
+    clear Hreq_neg.
+
+    destruct (bool_dec (st_pause st) ofalse).
+    - (* paused == false *)
+      generalize (Hreq_impl e); clear Hreq_impl; intros Hreq_impl.
+      apply Nat.leb_nle in Hreq_impl.
+
+      simpl in Hexec.
+      unfold dsl_neg in Hexec.
+      rewrite e in Hexec; simpl in Hexec.
+
+      unfold "<="%dsl, "+"%dsl in Hexec.
+      rewrite (spender_immutable _ _ _) in Hexec.
+      rewrite (addValue_immutable _ _ _) in Hexec.
+      rewrite (max_uint256_immutable _ _ _) in Hexec.
+      rewrite Hreq_impl in Hexec.
+      simpl in Hexec.
+      rewrite <- Hexec.
+      split; auto.
+
+    - (* paused == true *)
+      apply not_false_is_true in n.
+      simpl in Hexec.
+      unfold dsl_neg in Hexec.
+      rewrite n in Hexec; simpl in Hexec.
+      rewrite <- Hexec.
+      split; auto.
+  Qed.
+
   Close Scope dsl_scope.
 End dsl_increaseApproval.
 
 
-Section dsl_decreaseApproval_1.
+Section dsl_decreaseApproval.
   Open Scope dsl_scope.
 
   (* Declare arguments, generated from solidity *)
@@ -914,11 +1292,15 @@ Section dsl_decreaseApproval_1.
   Context `{zero_address_immutable: forall st env msg, zero_address st env msg = 0}.
   
   (* DSL representation of approve(), generated from solidity *)
-  Definition decreaseApproval_dsl_1 : Stmt :=
+  Definition decreaseApproval_dsl : Stmt :=
     ( @require(dsl_neg paused);
-      @require(allowed[msg.sender][spender] < subValue) ;
-      @allowed[msg.sender][spender] = zero_address ;
-     (@emit Approval(msg.sender, spender, zero_address)) ;
+      @uint256 oldValue = allowed[msg.sender][spender] ;
+      @if (subValue > oldValue) {
+         (@allowed[msg.sender][spender] = zero_address)
+     } else {
+         (@allowed[msg.sender][spender] -= subValue)
+     } ;
+     (@emit Approval(msg.sender, spender, allowed[msg.sender][spender])) ;
      (@return true)
     ).
 
@@ -927,7 +1309,7 @@ Section dsl_decreaseApproval_1.
     forall st env msg this,
       spec_require (funcspec_decreaseApproval_1 _spender _subValue this env msg) st ->
       forall st0 result,
-        dsl_exec decreaseApproval_dsl_1 st0 st env msg this nil = result ->
+        dsl_exec decreaseApproval_dsl st0 st env msg this nil = result ->
         spec_trans (funcspec_decreaseApproval_1 _spender _subValue this env msg) st (ret_st result) /\
         spec_events (funcspec_decreaseApproval_1 _spender _subValue this env msg) (ret_st result) (ret_evts result).
   Proof.
@@ -941,57 +1323,35 @@ Section dsl_decreaseApproval_1.
     rewrite Hreq_pause in Hexec.
     simpl in Hexec.
 
-    unfold "<"%dsl in Hexec.
-    rewrite (subValue_immutable _ _ _) in Hexec.
-    rewrite (spender_immutable _ _ _) in Hexec.
-    apply Nat.ltb_lt in Hreq_allow.
-    rewrite Hreq_allow in Hexec.
-    simpl in Hexec.
-    unfold Stop in Hexec.
+    unfold ">"%dsl in Hexec.
     rewrite (spender_immutable _ _ _) in Hexec.
     rewrite (zero_address_immutable _ _ _) in Hexec.
+    rewrite (subValue_immutable _ _ _) in Hexec.
 
+    apply Nat.ltb_lt in Hreq_allow.
+    rewrite Nat.leb_antisym in Hexec.
+    rewrite Hreq_allow in Hexec.
+    simpl in Hexec.
+
+    unfold Stop in Hexec.
+    
     unfold funcspec_decreaseApproval_1.
     simpl.
     rewrite <- Hexec.
     repeat rewrite (spender_immutable _ _ _).
     repeat rewrite (zero_address_immutable _ _ _).
+    simpl.
     repeat (split; auto).
+    rewrite <- (tmap_get_upd_eq (st_allowed st) (m_sender msg, _spender) 0%nat) at 2.
+    auto.
   Qed.
-
-  Close Scope dsl_scope.
-End dsl_decreaseApproval_1.
-
-
-Section dsl_decreaseApproval_2.
-  Open Scope dsl_scope.
-
-  (* Declare arguments, generated from solidity *)
-  Context `{ spender: state -> env -> message -> address }.
-  Context `{ _spender: address }.
-  Context `{ subValue: state -> env -> message -> uint256 }.
-  Context `{ _subValue: uint256 }.
-
-
-  (* Arguments are immutable, generated from solidity *)
-  Context `{ spender_immutable: forall st env msg, spender st env msg = _spender }.
-  Context `{ subValue_immutable: forall st env msg, subValue st env msg = _subValue }.
-  
-  (* DSL representation of approve(), generated from solidity *)
-  Definition decreaseApproval_dsl_2 : Stmt :=
-    ( @require(dsl_neg paused);
-      @require(allowed[msg.sender][spender] >= subValue) ;
-      @allowed[msg.sender][spender] -= subValue ;
-     (@emit Approval(msg.sender, spender, allowed[msg.sender][spender])) ;
-     (@return true)
-    ).
 
   (* Manually proved *)
   Lemma decreaseApproval_dsl_2_sat_spec:
     forall st env msg this,
       spec_require (funcspec_decreaseApproval_2 _spender _subValue this env msg) st ->
       forall st0 result,
-        dsl_exec decreaseApproval_dsl_2 st0 st env msg this nil = result ->
+        dsl_exec decreaseApproval_dsl st0 st env msg this nil = result ->
         spec_trans (funcspec_decreaseApproval_2 _spender _subValue this env msg) st (ret_st result) /\
         spec_events (funcspec_decreaseApproval_2 _spender _subValue this env msg) (ret_st result) (ret_evts result).
   Proof.
@@ -1005,30 +1365,76 @@ Section dsl_decreaseApproval_2.
     rewrite Hreq_pause in Hexec.
     simpl in Hexec.
 
-    unfold ">="%dsl in Hexec.
+    unfold ">"%dsl in Hexec.
     rewrite (subValue_immutable _ _ _) in Hexec.
     rewrite (spender_immutable _ _ _) in Hexec.
     apply Nat.leb_le in Hreq_allow.
-    rewrite (Nat.ltb_antisym _ _) in Hexec.
     rewrite Hreq_allow in Hexec.
     simpl in Hexec.
-
     unfold Stop in Hexec.
-    
-    rewrite (spender_immutable _ _ _) in Hexec.
-    rewrite (subValue_immutable _ _ _) in Hexec.
-    simpl in Hexec.
-    
+
     unfold funcspec_decreaseApproval_2.
     simpl.
     rewrite <- Hexec.
     repeat rewrite (spender_immutable _ _ _).
-    repeat rewrite (subValue_immutable _ _ _).
-    repeat (split; auto).
+    repeat (split; simpl; auto).
   Qed.
 
+  (* If no require can be satisfied, decreaseApproval() must revert to the initial state *)
+  Lemma decreaseApproval_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_decreaseApproval _spender _subValue ->
+      ~ spec_require (funcspec_decreaseApproval_1 _spender _subValue this env msg) st ->
+      ~ spec_require (funcspec_decreaseApproval_2 _spender _subValue this env msg) st ->
+      forall st0 result,
+        dsl_exec decreaseApproval_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_1 Hreq_2 st0 result Hexec.
+
+    simpl in Hreq_1.
+    assert (Hreq1_impl: st_pause st = ofalse ->
+                        ~ (st_allowed st (m_sender msg, _spender) < _subValue)%nat).
+    {
+      apply Decidable.or_not_l_iff_1.
+      - apply beq_decidable.
+      - apply (Decidable.not_and _ _ (beq_decidable _ _)) in Hreq_1; auto.
+    }
+    clear Hreq_1.
+
+    simpl in Hreq_2.
+    assert (Hreq2_impl: st_pause st = ofalse ->
+                        ~(st_allowed st (m_sender msg, _spender) >= _subValue)%nat).
+    {
+      apply Decidable.or_not_l_iff_1.
+      - apply beq_decidable.
+      - apply (Decidable.not_and _ _ (beq_decidable _ _)) in Hreq_2; auto.
+    }
+    clear Hreq_2.
+
+    destruct (bool_dec (st_pause st) ofalse).
+
+    - (* paused == false *)
+      generalize (Hreq1_impl e); clear Hreq1_impl; intros Hreq1_impl.
+      generalize (Hreq2_impl e); clear Hreq2_impl; intros Hreq2_impl.
+
+      apply Nat.nlt_ge in Hreq1_impl.
+      apply Hreq2_impl in Hreq1_impl.
+      inversion Hreq1_impl.
+
+    - (* paused == true *)
+      apply not_false_is_true in n.
+
+      simpl in Hexec.
+      unfold dsl_neg in Hexec.
+      rewrite n in Hexec; simpl in Hexec.
+
+      rewrite <- Hexec.
+      split; auto.
+  Qed.
+  
   Close Scope dsl_scope.
-End dsl_decreaseApproval_2.
+End dsl_decreaseApproval.
 
 
 Section dsl_transferOwnership.
@@ -1089,6 +1495,59 @@ Section dsl_transferOwnership.
     repeat rewrite (newOwner_immutable _ _ _).
     repeat (split; auto).    
   Qed.
+
+(* If no require can be satisfied, approve() must revert to the initial state *)
+  Lemma transferOwnership_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_OwnershipTransferred _newOwner ->
+      ~ spec_require (funcspec_transferOwnership _newOwner this env msg) st ->
+      forall st0 result,
+        dsl_exec transferOwnership_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+    simpl in Hreq_neg.
+    apply Decidable.not_and in Hreq_neg.
+
+     assert (Hreq_impl:
+               (m_sender msg = st_owner st ->
+            (~ _newOwner <> 0))).
+    {
+      apply Decidable.or_not_l_iff_1; auto.
+       apply Nat.eq_decidable.
+    }
+    clear Hreq_neg.
+
+    simpl in Hexec.
+    unfold "=="%dsl in Hexec.
+    destruct (beq_dec (oldOwner st env msg) (st_owner st)).
+    + apply Nat.eqb_eq in H.
+      assert ((oldOwner st env msg =? st_owner st) = otrue).
+      unfold otrue. apply Nat.eqb_eq. auto.
+      rewrite H0 in Hexec.
+      simpl in Hexec.
+      rewrite (oldOwner_immutable _ _ _) in H.
+      apply Hreq_impl in H.
+      apply Nat.eq_dne in H.
+
+      unfold "!="%dsl in Hexec.
+      rewrite (zero_address_immutable _ _ _) in Hexec.
+      rewrite (newOwner_immutable _ _ _) in Hexec.
+      rewrite H in Hexec. simpl in Hexec.
+      rewrite <- Hexec.
+      split; auto.
+    + apply Nat.eqb_neq in H.
+      assert ((oldOwner st env msg =? st_owner st) = ofalse).
+      unfold ofalse. apply Nat.eqb_neq. auto.
+      rewrite H0 in Hexec.
+      simpl in Hexec.
+      rewrite <- Hexec.
+      split; auto.
+    + unfold Decidable.decidable.
+      destruct (beq_dec ( m_sender msg) (st_owner st)).
+      - apply Nat.eqb_eq in H. left. auto.
+      - apply Nat.eqb_neq in H. right. auto.
+  Qed.
   
   Close Scope dsl_scope.
 End dsl_transferOwnership.
@@ -1137,6 +1596,28 @@ Section dsl_renounceOwnership.
     rewrite <- Hexec.
     simpl.
     repeat (split; auto).    
+  Qed.
+
+(* If no require can be satisfied, approve() must revert to the initial state *)
+  Lemma OwnershipRenounced_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_renounceOwnership ->
+      ~ spec_require (funcspec_renounceOwnership this env msg) st ->
+      forall st0 result,
+        dsl_exec OwnershipRenounced_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+    simpl in Hreq_neg.
+    apply Nat.eqb_neq in Hreq_neg.
+          
+    simpl in Hexec.
+    unfold "=="%dsl in Hexec.
+    rewrite (oldOwner_immutable _ _ _) in Hexec.
+    rewrite Hreq_neg in Hexec.
+    simpl in Hexec.
+    rewrite <- Hexec.
+    unfold Stop. auto.
   Qed.
   
   Close Scope dsl_scope.
@@ -1193,7 +1674,72 @@ Section dsl_pause.
     simpl.
     repeat (split; auto).    
   Qed.
+
   
+(* If no require can be satisfied, pause() must revert to the initial state *)
+Lemma pause_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_pause ->
+      ~ spec_require (funcspec_pause this env msg) st ->
+      forall st0 result,
+        dsl_exec pause_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+
+    simpl in Hreq_neg.    
+    assert (Hreq_impl:  st_owner st = m_sender msg -> ~ st_pause st = ofalse).
+    {
+      apply Decidable.or_not_l_iff_1.
+      - unfold Decidable.decidable. 
+        destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+        left. auto. right. auto.
+      - apply (Decidable.not_and) in Hreq_neg.
+        Print Nat.
+        unfold ofalse.
+        assert (m_sender msg <> st_owner st -> (st_owner st = m_sender msg -> False)).
+        apply Nat.neq_sym.
+        destruct Hreq_neg.
+        left. apply H. auto.
+        right. auto.
+        unfold Decidable.decidable. 
+        destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+        left. auto. right. auto.
+    }
+    clear Hreq_neg.
+
+    simpl in Hexec. unfold "=="%dsl in Hexec.
+    destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+    - (* owner == msg.sender *)
+      apply Nat.eq_sym in e. 
+      apply Nat.eqb_eq in e.
+      rewrite (sender_immutable _ _ _) in Hexec. 
+      rewrite e in Hexec; simpl in Hexec.
+
+      unfold dsl_neg in Hexec.
+      apply Nat.eqb_eq in e.
+      apply Nat.eq_sym in e.
+      apply Hreq_impl in e.
+
+      unfold ofalse in e.
+
+      apply not_false_is_true in e.
+      rewrite e in Hexec.
+      simpl in Hexec.
+
+      rewrite <- Hexec.
+      unfold Stop. auto.
+    - (* owner <> msg.sender *)
+      
+      rewrite (sender_immutable _ _ _) in Hexec.
+      apply Nat.neq_sym in n.
+      apply Nat.eqb_neq in n.     
+      rewrite n in Hexec.
+      simpl in Hexec.
+      rewrite <- Hexec.
+      unfold Stop. auto.
+  Qed.
+
   Close Scope dsl_scope.
 End dsl_pause.
 
@@ -1246,6 +1792,69 @@ Section dsl_unpause.
     simpl.
     repeat rewrite (notPaused_immutable _ _ _).
     repeat (split; auto).    
+  Qed.
+
+(* If no require can be satisfied, pause() must revert to the initial state *)
+Lemma unpause_dsl_revert:
+    forall st env msg this,
+      m_func msg = mc_pause ->
+      ~ spec_require (funcspec_unpause this env msg) st ->
+      forall st0 result,
+        dsl_exec unpause_dsl st0 st env msg this nil = result ->
+        result = Stop st0 (ev_revert this :: nil).
+  Proof.
+    intros st env msg this Hfunc Hreq_neg st0 result Hexec.
+
+    simpl in Hreq_neg.    
+    assert (Hreq_impl:  st_owner st = m_sender msg -> ~ st_pause st = otrue).
+    {
+      apply Decidable.or_not_l_iff_1.
+      - unfold Decidable.decidable. 
+        destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+        left. auto. right. auto.
+      - apply (Decidable.not_and) in Hreq_neg.
+        unfold otrue.
+        assert (m_sender msg <> st_owner st -> (st_owner st = m_sender msg -> False)).
+        apply Nat.neq_sym.
+        destruct Hreq_neg.
+        left. apply H. auto.
+        right. auto.
+        unfold Decidable.decidable. 
+        destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+        left. auto. right. auto.
+    }
+    clear Hreq_neg.
+
+    simpl in Hexec. unfold "=="%dsl in Hexec.
+    destruct (Nat.eq_dec (st_owner st) (m_sender msg)).
+    - (* owner == msg.sender *)
+      apply Nat.eq_sym in e. 
+      apply Nat.eqb_eq in e.
+      rewrite (sender_immutable _ _ _) in Hexec. 
+      rewrite e in Hexec; simpl in Hexec.
+
+      unfold dsl_neg in Hexec.
+      apply Nat.eqb_eq in e.
+      apply Nat.eq_sym in e.
+      apply Hreq_impl in e.
+
+      unfold otrue in e.
+
+      apply not_true_is_false in e.
+      rewrite e in Hexec.
+      simpl in Hexec.
+
+      rewrite <- Hexec.
+      unfold Stop. auto.
+    - (* owner <> msg.sender *)
+      
+      rewrite (sender_immutable _ _ _) in Hexec.
+      apply Nat.neq_sym in n.
+      apply Nat.eqb_neq in n.     
+      rewrite n in Hexec.
+      simpl in Hexec.
+      rewrite <- Hexec.
+      unfold Stop. auto.
   Qed.
   
   Close Scope dsl_scope.

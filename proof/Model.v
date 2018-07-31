@@ -92,3 +92,11 @@ Inductive mcall : Type :=
 (* Message, with a simplication that args are embedded in `m_func`,
    instead of calldata *)
 Definition message := TMessage mcall.
+
+Axiom increaseApproval_value_inrange:
+  forall spender v msg,
+    msg = mc_increaseApproval spender v -> 0 <= v /\ v <= MAX_UINT256.
+
+Axiom decreaseApproval_value_inrange:
+  forall spender v msg,
+    msg = mc_decreaseApproval spender v -> 0 <= v /\ v <= MAX_UINT256.

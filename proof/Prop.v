@@ -48,34 +48,6 @@ Inductive Sum : (@tmap address value) -> value -> Prop :=
      Sum m v
      -> Sum (m $+ {a' <- 0}) (v - (m a')).
 
-Lemma address_dec : forall (a1 a2: address),
-      {a1 = a2} + {a1 <> a2}.
-Proof.
-  intros.
-  remember (beq a1 a2) as Ha.
-  assert (beq a1 a2 = Ha). auto.
-  destruct Ha.
-  beq_elimH H. left. apply H.
-  right.
-  simplbeq.
-  trivial.
-Qed.
-
-Lemma Sum_dec2 : forall m t a,
-        Sum m t
-        -> Sum  (m $+ {a <- -= m a}) (t - m a).
-Proof.
-  unfold a2v_upd_dec.
-  intros.
-  assert (Ht : minus_with_underflow (m a) (m a) = 0).
-  assert (Ht1 : 0 = (m a) - (m a)).
-    auto with arith.
-    rewrite Ht1.
-    apply minus_safe; auto.
-    rewrite Ht.
-  apply Sum_del; trivial.
-Qed.
-
 Fixpoint sum (m: @tmap address value) (al: list address) : value :=
   match al with
   | nil => 0
@@ -113,26 +85,6 @@ Proof.
   induction al.
   simpl. trivial.
   simpl. apply IHal.
-Qed.
-
-Lemma sum_add_cons : forall (al : list address) m (a: address),
-    list_in a al = false
-    -> no_repeat al = true
-    -> m a + sum m al  = sum m (a :: al).
-Proof.
-  induction al.
-    intros m a Hin Hnr.
-    simpl.
-    trivial.
-  intros m a' Hin' Hnr'.
-  assert (Hnin : list_in a' al = false).
-    simpl in Hin'.
-    decbeq a' a.
-    trivial.
-  substH IHal with (IHal m a' Hnin).
-  simpl.
-  simpl in IHal.
-  omega.
 Qed.
 
 Lemma sum_del_none : forall al m a,
@@ -513,7 +465,7 @@ Proof.
   omega.
 Qed.
 
-Lemma test : forall a b,
+Lemma ge_sub_inc: forall a b,
     a >= b -> a = a - b + b.
 Proof.
   intros.
@@ -539,7 +491,7 @@ Proof.
         omega.
       clear - Ht2.
       unfold value in t.
-      eapply test; eauto.
+      eapply ge_sub_inc; eauto.
     rewrite Ht.
     eapply Sum_inc; eauto.
     eapply Sum_dec; eauto.
@@ -568,7 +520,7 @@ Proof.
         apply Sum_ge_2; trivial.
       rewrite minus_minus.
       arith_rewrite (t - (v + m a2) + m a2 + v = t - (v + m a2) + (v + m a2)).
-      rewrite <- test; trivial.
+      rewrite <- ge_sub_inc; trivial.
       omega.
     rewrite Ht.
     rewrite H2.
@@ -729,7 +681,7 @@ Proof.
           rewrite (tmap_get_upd_ne _ _ _ _ H1).
           rewrite (tmap_get_upd_eq _ _ _).
           rewrite (tmap_get_upd_ne _ _ _ _ H1).
-          rewrite (plus_safe_lt _ _ Hx1e).
+          rewrite (plus_safe_lt _ _ Hx1d).
           generalize(Hblncs from). intros. omega.
         }
         {

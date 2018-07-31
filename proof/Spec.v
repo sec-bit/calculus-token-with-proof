@@ -44,12 +44,10 @@ Record Spec: Type :=
 *)
 
 (*
-  funcspec constructor(){
-    pre: True
-    event: @@constructor() ++ @Transefer(0x0, msg.sender, 2718281828 * (10 ** 18))
-    post: totalSupply_' = 2718281828 * (10 ** 18) 
-            and balances' = balances{ [msg.sender]<- 2718281828 * (10 ** 18)
-            and owner' = msg.sender }
+  constructor() public {
+    totalSupply_ = INITIAL_SUPPLY;
+    balances[msg.sender] = INITIAL_SUPPLY;
+    emit Transfer(0x0, msg.sender, INITIAL_SUPPLY);
   }
 *)
 Definition funcspec_constructor :=
@@ -190,10 +188,10 @@ Definition funcspec_transferFrom
        ( st_pause S = false /\ to <> 0 /\
        (* _value <= balances[_from] *)
          st_balances S from >= value /\
-       (* _value <= allowed[_from][msg.sender] *)
-         st_allowed S (from, m_sender msg) >= value /\
        (* balances[_to] + _value < MAX_UINT256 *)
-         st_balances S to <= MAX_UINT256 - value))
+         st_balances S to <= MAX_UINT256 - value /\
+       (* _value <= allowed[_from][msg.sender] *)
+         st_allowed S (from, m_sender msg) >= value))
        
        (* emit Transfer(_from, _to, _value); *)
        (* return True; *)
@@ -276,14 +274,14 @@ Definition funcspec_allowance (owner: address) (spender: address) :=
     ).
 
 (*
-  funspec increaseApproval(address _spender, uint _addedValue){
-    require: !paused and allowed[msg.sender][_spender]+ _addedValue < MAX_UINT256
+funspec increaseApproval(address _spender, uint _addedValue){
+    require: !paused and allowed{[msg.sender][_spender] + _addedValue < MAX_UINT256}
     {
         pre:True
-        event: @Approval(msg.sender, _spender, allowed[msg.sender][_spender]) ++ @Return(true)
-        post: allowed' =  allowed{ [msg.sender][_spender] <-  ($ + _addedValue)
+        event: @Approval(msg.sender, _spender, allowed[msg.sender][_spender]+ _addedValue) ++ @Return(true)
+        post: allowed' =  allowed{[msg.sender][_spender] <-  ($ + _addedValue)}
     }    
-  }
+}
  *)
 Definition funcspec_increaseApproval (spender: address)(addValue: value):=
   fun (this: address) (env: env) (msg: message) =>
@@ -319,7 +317,7 @@ funspec decreaseApproval(address _spender, uint _subValue){
     {
         pre: _subValue > allowed[msg.sender][_spender]
         event: @Approval(msg.sender, 0) ++ @Return(true)
-        post: allowed' =  allowed{ [msg.sender][_spender] <- 0)
+        post: allowed' =  allowed{[msg.sender][_spender] <- 0)}
     }
 }
  *)
@@ -354,7 +352,7 @@ funspec decreaseApproval(address _spender, uint _subValue){
     {
         pre: _subValue <= allowed[msg.sender][_spender]
         event: @Approval(msg.sender, allowed[msg.sender][_spender] - _subValue) ++ @Return(true)
-        post: allowed' =  allowed{ [msg.sender][_spender] <- $ - _subValue)
+        post: allowed' =  allowed{[msg.sender][_spender] <- $ - _subValue)}
     }
 }
 *)
